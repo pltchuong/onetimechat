@@ -3,119 +3,115 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Simple Chat</title>
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<title>Chat</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #eee; height: 100vh; display: flex; flex-direction: column; }
-  #setup { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; gap: 16px; padding: 20px; }
-  #setup h1 { font-size: 24px; margin-bottom: 10px; }
-  #setup .id-box { background: #16213e; padding: 16px 24px; border-radius: 8px; text-align: center; }
-  #setup .id-box span { font-size: 20px; font-weight: bold; color: #0f0; letter-spacing: 2px; cursor: pointer; }
-  #setup input { padding: 10px 16px; font-size: 16px; border-radius: 6px; border: 1px solid #444; background: #16213e; color: #eee; width: 260px; text-align: center; }
-  #setup button { padding: 10px 24px; font-size: 16px; border-radius: 6px; border: none; background: #0f3460; color: #eee; cursor: pointer; }
-  #setup button:hover { background: #1a5276; }
-  #setup .hint { font-size: 13px; color: #888; }
+  body { font-family: sans-serif; background: #fff; color: #222; height: 100vh; display: flex; flex-direction: column; }
+  #setup { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; gap: 10px; }
+  input, button { padding: 8px 14px; font-size: 15px; border-radius: 4px; border: 1px solid #ccc; background: #fff; color: #222; }
+  button { cursor: pointer; background: #eef; border: 1px solid #aac; }
   #chat { display: none; flex-direction: column; height: 100vh; }
-  #messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
-  .msg { max-width: 70%; padding: 10px 14px; border-radius: 12px; word-wrap: break-word; font-size: 15px; }
-  .msg.me { align-self: flex-end; background: #0f3460; }
-  .msg.them { align-self: flex-start; background: #16213e; }
-  .msg.system { align-self: center; color: #888; font-size: 13px; background: none; }
-  #input-bar { display: flex; padding: 12px; gap: 8px; background: #16213e; }
-  #input-bar input { flex: 1; padding: 10px; font-size: 16px; border-radius: 6px; border: 1px solid #333; background: #1a1a2e; color: #eee; }
-  #input-bar button { padding: 10px 20px; font-size: 16px; border-radius: 6px; border: none; background: #0f3460; color: #eee; cursor: pointer; }
-  #status { text-align: center; padding: 6px; font-size: 12px; color: #888; background: #111; }
+  #messages { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 4px; }
+  .msg { margin: 4px 0; padding: 6px 10px; border-radius: 6px; max-width: 75%; font-size: 14px; width: fit-content; }
+  .me { background: #e0e8ff; align-self: flex-end; }
+  .them { background: #f0f0f0; }
+  .sys { color: #999; font-size: 12px; text-align: center; max-width: 100%; align-self: center; }
+  #topbar { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 12px; color: #999; }
+  #room-label { font-size: 18px; font-weight: bold; color: #222; }
+  #logout { font-size: 12px; background: none; border: none; color: #999; cursor: pointer; }
+  #bar { display: flex; gap: 6px; padding: 8px; background: #f8f8f8; border-top: 1px solid #ddd; }
+  #bar input { flex: 1; }
 </style>
 </head>
 <body>
 
 <div id="setup">
-  <h1>Simple Chat</h1>
-  <input id="my-name" placeholder="Pick your username" />
-  <button id="btn-go" onclick="goOnline()">Go Online</button>
-  <div id="connect-section" style="display:none">
-    <div class="id-box">
-      Your ID: <span id="my-id"></span>
-    </div>
-    <p class="hint">Share your ID with your friend, or enter theirs below</p>
-    <input id="peer-id" placeholder="Enter friend's ID" />
-    <button onclick="connectToPeer()">Connect</button>
-  </div>
+  <input id="name" placeholder="Name" style="text-align:center;width:200px" />
+  <input id="room" placeholder="Room" style="text-align:center;width:200px" />
+  <button id="go">Join</button>
 </div>
 
 <div id="chat">
-  <div id="status">Connected</div>
+  <div id="topbar">
+    <span id="status">Connecting...</span>
+    <span id="room-label"></span>
+    <button id="logout" onclick="localStorage.removeItem('chat_name');location.reload()">logout</button>
+  </div>
   <div id="messages"></div>
-  <div id="input-bar">
-    <input id="msg" placeholder="Type a message..." onkeydown="if(event.key==='Enter')sendMsg()" />
-    <button onclick="sendMsg()">Send</button>
+  <div id="bar">
+    <input id="msg" placeholder="Message..." />
+    <button id="send">Send</button>
   </div>
 </div>
 
-<script>
-let peer = null;
-let conn = null;
+<script type="module">
+import { joinRoom } from 'https://esm.sh/trystero@0.18.0/mqtt';
 
-function goOnline() {
-  const name = document.getElementById('my-name').value.trim().toLowerCase();
-  if (!name) return;
-  document.getElementById('my-name').disabled = true;
-  document.getElementById('btn-go').disabled = true;
-  peer = new Peer(name);
-  peer.on('open', id => {
-    document.getElementById('my-id').textContent = id;
-    document.getElementById('my-id').onclick = () => {
-      navigator.clipboard.writeText(id);
-      document.getElementById('my-id').textContent = id + ' (copied!)';
-      setTimeout(() => document.getElementById('my-id').textContent = id, 1500);
-    };
-    document.getElementById('connect-section').style.display = '';
-  });
-  peer.on('connection', c => {
-    conn = c;
-    setupConn();
-  });
-  peer.on('error', e => {
-    alert('Error: ' + e.message);
-    document.getElementById('my-name').disabled = false;
-    document.getElementById('btn-go').disabled = false;
-  });
+const urlRoom = new URLSearchParams(location.search).get('room');
+if (urlRoom) document.getElementById('room').value = urlRoom;
+const savedName = localStorage.getItem('chat_name');
+if (savedName) document.getElementById('name').value = savedName;
+
+let sendMsg, myName, currentRoom = '';
+
+function join() {
+  myName = document.getElementById('name').value.trim();
+  const r = document.getElementById('room').value.trim();
+  if (!myName || !r) return;
+  localStorage.setItem('chat_name', myName);
+  history.replaceState(null, '', '?room=' + encodeURIComponent(r));
+
+  const room = joinRoom({ appId: 'onetimechat-phan' }, r);
+  const [send, onMsg] = room.makeAction('chat');
+  sendMsg = send;
+
+  currentRoom = r;
+  document.getElementById('setup').style.display = 'none';
+  document.getElementById('chat').style.display = 'flex';
+  document.getElementById('room-label').textContent = r;
+  loadHistory(r);
+
+  let peerCount = 0;
+  const updateStatus = () => { document.getElementById('status').textContent = peerCount ? peerCount + ' peer' + (peerCount > 1 ? 's' : '') + ' online' : 'No peers online'; };
+  room.onPeerJoin(() => { peerCount++; updateStatus(); });
+  room.onPeerLeave(() => { peerCount = Math.max(0, peerCount - 1); updateStatus(); });
+  onMsg((d) => add(d.n + ': ' + d.t, 'them'));
 }
 
-function connectToPeer() {
-  const id = document.getElementById('peer-id').value.trim();
-  if (!id) return;
-  conn = peer.connect(id);
-  setupConn();
+document.getElementById('go').onclick = join;
+document.getElementById('send').onclick = go;
+document.getElementById('msg').onkeydown = e => { if (e.key === 'Enter') go(); };
+
+if (savedName && urlRoom) join();
+
+function go() {
+  const el = document.getElementById('msg');
+  const t = el.value.trim();
+  if (!t || !sendMsg) return;
+  sendMsg({ n: myName, t });
+  add('You: ' + t, 'me');
+  el.value = '';
 }
 
-function setupConn() {
-  conn.on('open', () => {
-    document.getElementById('setup').style.display = 'none';
-    document.getElementById('chat').style.display = 'flex';
-    addMsg('Connected!', 'system');
-  });
-  conn.on('data', data => addMsg(data, 'them'));
-  conn.on('close', () => addMsg('Disconnected.', 'system'));
+function add(text, cls, save = true) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + cls;
+  d.textContent = text;
+  const m = document.getElementById('messages');
+  m.appendChild(d);
+  m.scrollTop = m.scrollHeight;
+  if (save && cls !== 'sys') {
+    const key = 'chat_' + currentRoom;
+    const history = JSON.parse(localStorage.getItem(key) || '[]');
+    history.push({ text, cls });
+    localStorage.setItem(key, JSON.stringify(history));
+  }
 }
 
-function sendMsg() {
-  const input = document.getElementById('msg');
-  const text = input.value.trim();
-  if (!text || !conn) return;
-  conn.send(text);
-  addMsg(text, 'me');
-  input.value = '';
-}
-
-function addMsg(text, type) {
-  const div = document.createElement('div');
-  div.className = 'msg ' + type;
-  div.textContent = text;
-  const msgs = document.getElementById('messages');
-  msgs.appendChild(div);
-  msgs.scrollTop = msgs.scrollHeight;
+function loadHistory(room) {
+  currentRoom = room;
+  const history = JSON.parse(localStorage.getItem('chat_' + room) || '[]');
+  history.forEach(m => add(m.text, m.cls, false));
 }
 </script>
 </body>
