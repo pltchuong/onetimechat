@@ -17,9 +17,9 @@
   .them { background: #f0f0f0; }
   .sys { color: #999; font-size: 12px; text-align: center; max-width: 100%; align-self: center; }
   #topbar { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 12px; color: #999; }
-  #status { cursor: pointer; position: relative; }
+  #status { cursor: default; position: relative; }
   #status-popup { display: none; position: absolute; top: 100%; left: 0; background: #fff; border: 1px solid #ddd; border-radius: 4px; padding: 6px 10px; font-size: 13px; color: #222; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.1); z-index: 10; }
-  #status-popup.show { display: block; }
+  #status:hover #status-popup { display: block; }
   #room-label { font-size: 18px; font-weight: bold; color: #222; }
   #logout { font-size: 12px; background: none; border: none; color: #999; cursor: pointer; }
   #bar { display: flex; gap: 6px; padding: 8px; background: #f8f8f8; border-top: 1px solid #ddd; }
@@ -36,7 +36,7 @@
 
 <div id="chat">
   <div id="topbar">
-    <span id="status" onclick="document.getElementById('status-popup').classList.toggle('show')"><span id="status-text">Connecting...</span><div id="status-popup"></div></span>
+    <span id="status"><span id="status-text">Connecting...</span><div id="status-popup"></div></span>
     <span id="room-label"></span>
     <button id="logout" onclick="localStorage.removeItem('chat_name');location.reload()">logout</button>
   </div>
@@ -56,6 +56,16 @@ const savedName = localStorage.getItem('chat_name');
 if (savedName) document.getElementById('name').value = savedName;
 
 let sendMsg, myName, currentRoom = '';
+
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function ping() {
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.connect(g); g.connect(audioCtx.destination);
+  o.frequency.value = 800;
+  g.gain.value = 0.15;
+  o.start(); o.stop(audioCtx.currentTime + 0.1);
+}
 
 function join() {
   myName = document.getElementById('name').value.trim();
@@ -94,7 +104,7 @@ function join() {
   onName((name, id) => { peers[id] = { n: name, t: Date.now() }; updateStatus(); });
   setInterval(() => sendName(myName), 5000);
   setInterval(updateStatus, 5000);
-  onMsg((d) => addMsg(d.n, d.t, d.ts || Date.now()));
+  onMsg((d) => { addMsg(d.n, d.t, d.ts || Date.now()); ping(); });
   onSync((remote) => mergeHistory(remote));
 }
 
