@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Simple Chat</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #eee; height: 100vh; display: flex; flex-direction: column; }
+  #setup { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; gap: 16px; padding: 20px; }
+  #setup h1 { font-size: 24px; margin-bottom: 10px; }
+  #setup .id-box { background: #16213e; padding: 16px 24px; border-radius: 8px; text-align: center; }
+  #setup .id-box span { font-size: 20px; font-weight: bold; color: #0f0; letter-spacing: 2px; cursor: pointer; }
+  #setup input { padding: 10px 16px; font-size: 16px; border-radius: 6px; border: 1px solid #444; background: #16213e; color: #eee; width: 260px; text-align: center; }
+  #setup button { padding: 10px 24px; font-size: 16px; border-radius: 6px; border: none; background: #0f3460; color: #eee; cursor: pointer; }
+  #setup button:hover { background: #1a5276; }
+  #setup .hint { font-size: 13px; color: #888; }
+  #chat { display: none; flex-direction: column; height: 100vh; }
+  #messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+  .msg { max-width: 70%; padding: 10px 14px; border-radius: 12px; word-wrap: break-word; font-size: 15px; }
+  .msg.me { align-self: flex-end; background: #0f3460; }
+  .msg.them { align-self: flex-start; background: #16213e; }
+  .msg.system { align-self: center; color: #888; font-size: 13px; background: none; }
+  #input-bar { display: flex; padding: 12px; gap: 8px; background: #16213e; }
+  #input-bar input { flex: 1; padding: 10px; font-size: 16px; border-radius: 6px; border: 1px solid #333; background: #1a1a2e; color: #eee; }
+  #input-bar button { padding: 10px 20px; font-size: 16px; border-radius: 6px; border: none; background: #0f3460; color: #eee; cursor: pointer; }
+  #status { text-align: center; padding: 6px; font-size: 12px; color: #888; background: #111; }
+</style>
+</head>
+<body>
+
+<div id="setup">
+  <h1>Simple Chat</h1>
+  <div class="id-box">
+    Your ID: <span id="my-id">connecting...</span>
+  </div>
+  <p class="hint">Share your ID with your friend, or enter theirs below</p>
+  <input id="peer-id" placeholder="Enter friend's ID" />
+  <button onclick="connectToPeer()">Connect</button>
+</div>
+
+<div id="chat">
+  <div id="status">Connected</div>
+  <div id="messages"></div>
+  <div id="input-bar">
+    <input id="msg" placeholder="Type a message..." onkeydown="if(event.key==='Enter')sendMsg()" />
+    <button onclick="sendMsg()">Send</button>
+  </div>
+</div>
+
+<script>
+const peer = new Peer();
+let conn = null;
+
+peer.on('open', id => {
+  document.getElementById('my-id').textContent = id;
+  document.getElementById('my-id').onclick = () => {
+    navigator.clipboard.writeText(id);
+    document.getElementById('my-id').textContent = id + ' (copied!)';
+    setTimeout(() => document.getElementById('my-id').textContent = id, 1500);
+  };
+});
+
+peer.on('connection', c => {
+  conn = c;
+  setupConn();
+});
+
+function connectToPeer() {
+  const id = document.getElementById('peer-id').value.trim();
+  if (!id) return;
+  conn = peer.connect(id);
+  setupConn();
+}
+
+function setupConn() {
+  conn.on('open', () => {
+    document.getElementById('setup').style.display = 'none';
+    document.getElementById('chat').style.display = 'flex';
+    addMsg('Connected!', 'system');
+  });
+  conn.on('data', data => addMsg(data, 'them'));
+  conn.on('close', () => addMsg('Disconnected.', 'system'));
+}
+
+function sendMsg() {
+  const input = document.getElementById('msg');
+  const text = input.value.trim();
+  if (!text || !conn) return;
+  conn.send(text);
+  addMsg(text, 'me');
+  input.value = '';
+}
+
+function addMsg(text, type) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + type;
+  div.textContent = text;
+  const msgs = document.getElementById('messages');
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+</script>
+</body>
+</html>
