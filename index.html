@@ -50,7 +50,13 @@
 </div>
 
 <script>
-const peer = new Peer();
+function shortId() {
+  const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+  let id = '';
+  for (let i = 0; i < 4; i++) id += chars[Math.floor(Math.random() * chars.length)];
+  return id;
+}
+const peer = new Peer(shortId());
 let conn = null;
 
 peer.on('open', id => {
