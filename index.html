@@ -32,6 +32,11 @@
   #logout { font-size: 12px; background: none; border: none; color: #999; cursor: pointer; }
   #bar { display: flex; gap: 6px; padding: 8px; background: #f8f8f8; border-top: 1px solid #ddd; align-items: flex-end; }
   #bar textarea { flex: 1; resize: none; font-family: sans-serif; padding: 8px 14px; font-size: 16px; border-radius: 4px; border: 1px solid #ccc; max-height: 120px; overflow-y: auto; }
+  #file-btn { font-size: 22px; cursor: pointer; padding: 4px; user-select: none; }
+  .file-msg { display: flex; flex-direction: column; gap: 4px; }
+  .file-msg img { max-width: 240px; max-height: 200px; border-radius: 4px; cursor: pointer; }
+  .file-msg a { color: #36c; font-size: 13px; word-break: break-all; }
+  .file-size { font-size: 11px; color: #999; }
 </style>
 </head>
 <body>
@@ -50,6 +55,7 @@
   </div>
   <div id="messages"></div>
   <div id="bar">
+    <label id="file-btn" title="Send file">&#128206;<input type="file" id="file-input" style="display:none" /></label>
     <textarea id="msg" placeholder="Message... (Shift+Enter for new line)" rows="1"></textarea>
     <button id="send">Send</button>
   </div>
@@ -71,7 +77,7 @@ if (urlRoom) document.getElementById('room').value = urlRoom;
 const savedName = localStorage.getItem('chat_name');
 if (savedName) document.getElementById('name').value = savedName;
 
-let sendMsg, myName, currentRoom = '', lastSender = '';
+let sendMsg, sendFile, myName, currentRoom = '', lastSender = '';
 
 function nameHue(name) {
   let h = 2166136261;
@@ -102,7 +108,18 @@ function join() {
   const [send, onMsg] = room.makeAction('chat');
   const [sendSync, onSync] = room.makeAction('sync');
   const [sendName, onName] = room.makeAction('name');
+  const [sendFileMeta, onFileMeta] = room.makeAction('fmeta');
+  const [sendFileChunk, onFileChunk] = room.makeAction('fchunk');
   sendMsg = send;
+  sendFile = async (meta, b64) => {
+    sendFileMeta(meta);
+    const CHUNK = 8 * 1024;
+    const total = Math.ceil(b64.length / CHUNK);
+    for (let i = 0; i < total; i++) {
+      sendFileChunk({ id: meta.ts, i, total, data: b64.slice(i * CHUNK, (i + 1) * CHUNK) });
+      await new Promise(r => setTimeout(r, 20));
+    }
+  };
 
   currentRoom = r;
   document.getElementById('setup').style.display = 'none';
@@ -129,14 +146,73 @@ function join() {
   setInterval(() => sendName(myName), 5000);
   setInterval(updateStatus, 5000);
   onMsg((d) => { addMsg(d.n, d.t, d.ts || Date.now()); ping(); });
+  const incomingFiles = {};
+  onFileMeta((d) => {
+    incomingFiles[d.ts] = { meta: d, chunks: [], received: 0 };
+    addFileProgress(d.n, d.name, d.ts);
+  });
+  onFileChunk((d) => {
+    try {
+      const f = incomingFiles[d.id];
+      if (!f) return;
+      f.chunks[d.i] = d.data;
+      f.received++;
+      updateFileProgress(d.id, f.received / d.total);
+      if (f.received === d.total) {
+        const b64 = f.chunks.join('');
+        const m = f.meta;
+        completeFileProgress(m.ts, m.n, m.name, m.type, b64);
+        saveFilePlaceholder(m.n, m.name, b64.length * 0.75, m.ts);
+        delete incomingFiles[d.id];
+        ping();
+      }
+    } catch (e) {}
+  });
   onSync((remote) => mergeHistory(remote));
 }
 
 document.getElementById('go').onclick = join;
 document.getElementById('send').onclick = go;
+document.getElementById('file-input').onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file || !sendFile) return;
+  const MAX = 50 * 1024 * 1024;
+  if (file.size > MAX) { alert('File too large (max 50MB)'); return; }
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  const b64 = btoa(bin);
+  const ts = Date.now();
+  addFileMsg(myName, file.name, file.type, b64, ts);
+  saveFilePlaceholder(myName, file.name, file.size, ts);
+  await sendFile({ n: myName, name: file.name, type: file.type, ts, size: file.size }, b64);
+  e.target.value = '';
+};
 const msgEl = document.getElementById('msg');
 msgEl.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go(); } };
 msgEl.oninput = () => { msgEl.style.height = 'auto'; msgEl.style.height = msgEl.scrollHeight + 'px'; };
+
+document.addEventListener('paste', async (e) => {
+  const items = e.clipboardData?.items;
+  if (!items || !sendFile) return;
+  for (const item of items) {
+    if (!item.type.startsWith('image/')) continue;
+    e.preventDefault();
+    const file = item.getAsFile();
+    const buf = await file.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    const b64 = btoa(bin);
+    const name = 'clipboard-' + Date.now() + '.' + file.type.split('/')[1];
+    const ts = Date.now();
+    addFileMsg(myName, name, file.type, b64, ts);
+    saveFilePlaceholder(myName, name, file.size, ts);
+    await sendFile({ n: myName, name, type: file.type, ts, size: file.size }, b64);
+    break;
+  }
+});
 
 if (savedName && urlRoom) join();
 
@@ -165,6 +241,7 @@ function addMsg(name, text, ts = Date.now(), save = true) {
   d.className = 'msg markdown-body';
   d.style.background = bubbleColor(name);
   d.innerHTML = DOMPurify.sanitize(marked.parse(text), { ADD_ATTR: ['target'] });
+  if (text.startsWith('[File: ')) d.style.fontStyle = 'italic';
   d.title = new Date(ts).toLocaleString();
   wrap.appendChild(label);
   wrap.appendChild(d);
@@ -177,6 +254,96 @@ function addMsg(name, text, ts = Date.now(), save = true) {
     h.push({ name, text, ts });
     localStorage.setItem(key, JSON.stringify(h));
   }
+}
+
+function addFileMsg(sender, fileName, fileType, b64, ts = Date.now()) {
+  const cls = sender === myName ? 'me' : 'them';
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-wrap ' + cls;
+  const showName = cls !== 'me' && sender !== lastSender;
+  lastSender = sender;
+  const label = document.createElement('div');
+  label.className = 'msg-name';
+  label.textContent = sender;
+  if (!showName) label.style.display = 'none';
+  const d = document.createElement('div');
+  d.className = 'msg';
+  d.style.background = bubbleColor(sender);
+  d.title = new Date(ts).toLocaleString();
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const blob = new Blob([bytes], { type: fileType });
+  const url = URL.createObjectURL(blob);
+  const container = document.createElement('div');
+  container.className = 'file-msg';
+  if (fileType.startsWith('image/')) {
+    const img = document.createElement('img');
+    img.src = url;
+    img.onclick = () => window.open(url, '_blank');
+    container.appendChild(img);
+  }
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.target = '_blank';
+  a.textContent = fileName;
+  container.appendChild(a);
+  const size = document.createElement('span');
+  size.className = 'file-size';
+  const kb = bytes.length / 1024;
+  size.textContent = kb > 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.round(kb) + ' KB';
+  container.appendChild(size);
+  d.appendChild(container);
+  wrap.appendChild(label);
+  wrap.appendChild(d);
+  const m = document.getElementById('messages');
+  m.appendChild(wrap);
+  m.scrollTop = m.scrollHeight;
+}
+
+function addFileProgress(sender, fileName, id) {
+  const cls = sender === myName ? 'me' : 'them';
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-wrap ' + cls;
+  wrap.id = 'fp-' + id;
+  const showName = cls !== 'me' && sender !== lastSender;
+  lastSender = sender;
+  const label = document.createElement('div');
+  label.className = 'msg-name';
+  label.textContent = sender;
+  if (!showName) label.style.display = 'none';
+  const d = document.createElement('div');
+  d.className = 'msg';
+  d.style.background = bubbleColor(sender);
+  d.innerHTML = '<div class="file-msg"><span class="file-status" style="font-size:13px">Receiving ' + DOMPurify.sanitize(fileName) + ' (0%)</span></div>';
+  wrap.appendChild(label);
+  wrap.appendChild(d);
+  const m = document.getElementById('messages');
+  m.appendChild(wrap);
+  m.scrollTop = m.scrollHeight;
+}
+
+function updateFileProgress(id, pct) {
+  const el = document.getElementById('fp-' + id);
+  if (!el) return;
+  const p = Math.round(pct * 100);
+  const status = el.querySelector('.file-status');
+  if (status) status.textContent = status.textContent.replace(/\(\d+%\)/, '(' + p + '%)');
+  document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+}
+
+function completeFileProgress(id, sender, fileName, fileType, b64) {
+  const el = document.getElementById('fp-' + id);
+  if (el) el.remove();
+  addFileMsg(sender, fileName, fileType, b64, id);
+}
+
+function saveFilePlaceholder(name, fileName, sizeBytes, ts) {
+  const key = 'chat_' + currentRoom;
+  const h = JSON.parse(localStorage.getItem(key) || '[]');
+  const kb = sizeBytes / 1024;
+  const sizeStr = kb > 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.round(kb) + ' KB';
+  h.push({ name, text: '[File: ' + fileName + ' (' + sizeStr + ')]', ts, isFile: true });
+  localStorage.setItem(key, JSON.stringify(h));
 }
 
 function addSys(text) {
