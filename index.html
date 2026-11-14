@@ -32,12 +32,16 @@
 
 <div id="setup">
   <h1>Simple Chat</h1>
-  <div class="id-box">
-    Your ID: <span id="my-id">connecting...</span>
+  <input id="my-name" placeholder="Pick your username" />
+  <button id="btn-go" onclick="goOnline()">Go Online</button>
+  <div id="connect-section" style="display:none">
+    <div class="id-box">
+      Your ID: <span id="my-id"></span>
+    </div>
+    <p class="hint">Share your ID with your friend, or enter theirs below</p>
+    <input id="peer-id" placeholder="Enter friend's ID" />
+    <button onclick="connectToPeer()">Connect</button>
   </div>
-  <p class="hint">Share your ID with your friend, or enter theirs below</p>
-  <input id="peer-id" placeholder="Enter friend's ID" />
-  <button onclick="connectToPeer()">Connect</button>
 </div>
 
 <div id="chat">
@@ -50,28 +54,34 @@
 </div>
 
 <script>
-function shortId() {
-  const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
-  let id = '';
-  for (let i = 0; i < 4; i++) id += chars[Math.floor(Math.random() * chars.length)];
-  return id;
-}
-const peer = new Peer(shortId());
+let peer = null;
 let conn = null;
 
-peer.on('open', id => {
-  document.getElementById('my-id').textContent = id;
-  document.getElementById('my-id').onclick = () => {
-    navigator.clipboard.writeText(id);
-    document.getElementById('my-id').textContent = id + ' (copied!)';
-    setTimeout(() => document.getElementById('my-id').textContent = id, 1500);
-  };
-});
-
-peer.on('connection', c => {
-  conn = c;
-  setupConn();
-});
+function goOnline() {
+  const name = document.getElementById('my-name').value.trim().toLowerCase();
+  if (!name) return;
+  document.getElementById('my-name').disabled = true;
+  document.getElementById('btn-go').disabled = true;
+  peer = new Peer(name);
+  peer.on('open', id => {
+    document.getElementById('my-id').textContent = id;
+    document.getElementById('my-id').onclick = () => {
+      navigator.clipboard.writeText(id);
+      document.getElementById('my-id').textContent = id + ' (copied!)';
+      setTimeout(() => document.getElementById('my-id').textContent = id, 1500);
+    };
+    document.getElementById('connect-section').style.display = '';
+  });
+  peer.on('connection', c => {
+    conn = c;
+    setupConn();
+  });
+  peer.on('error', e => {
+    alert('Error: ' + e.message);
+    document.getElementById('my-name').disabled = false;
+    document.getElementById('btn-go').disabled = false;
+  });
+}
 
 function connectToPeer() {
   const id = document.getElementById('peer-id').value.trim();
