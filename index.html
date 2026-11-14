@@ -12,9 +12,12 @@
   button { cursor: pointer; background: #eef; border: 1px solid #aac; }
   #chat { display: none; flex-direction: column; height: 100vh; }
   #messages { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 4px; }
-  .msg { margin: 4px 0; padding: 6px 10px; border-radius: 6px; max-width: 75%; font-size: 14px; width: fit-content; }
-  .me { background: #e0e8ff; align-self: flex-end; }
-  .them { background: #f0f0f0; }
+  .msg { padding: 8px 12px; border-radius: 5px; font-size: 14px; width: fit-content; }
+  .msg-wrap { max-width: 75%; display: flex; flex-direction: column; margin-top: 2px; }
+  .msg-wrap:has(.msg-name:not([style*="display: none"])) { margin-top: 10px; }
+  .msg-wrap.me { align-self: flex-end; align-items: flex-end; }
+  .msg-wrap.them { align-self: flex-start; align-items: flex-start; }
+  .msg-name { font-size: 11px; margin-bottom: 1px; padding-left: 4px; color: #777; font-weight: 600; }
   .sys { color: #999; font-size: 12px; text-align: center; max-width: 100%; align-self: center; }
   #topbar { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 12px; color: #999; }
   #status { cursor: default; position: relative; }
@@ -55,7 +58,15 @@ if (urlRoom) document.getElementById('room').value = urlRoom;
 const savedName = localStorage.getItem('chat_name');
 if (savedName) document.getElementById('name').value = savedName;
 
-let sendMsg, myName, currentRoom = '';
+let sendMsg, myName, currentRoom = '', lastSender = '';
+
+function nameHue(name) {
+  let h = 2166136261;
+  for (let i = 0; i < name.length; i++) { h ^= name.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return ((h >>> 0) % 360);
+}
+function nameColor(name) { return 'hsl(' + nameHue(name) + ', 30%, 55%)'; }
+function bubbleColor(name) { return 'hsl(' + nameHue(name) + ', 60%, 92%)'; }
 
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 function ping() {
@@ -92,7 +103,7 @@ function join() {
     Object.keys(peers).forEach(id => { if (now - peers[id].t > 8000) delete peers[id]; });
     const names = [myName, ...Object.values(peers).map(p => p.n)];
     document.getElementById('status-text').textContent = names.length + ' online';
-    document.getElementById('status-popup').innerHTML = names.map(n => '<div>' + n + '</div>').join('');
+    document.getElementById('status-popup').innerHTML = names.map(n => '<div style="color:' + nameColor(n) + '">' + n + '</div>').join('');
   };
   updateStatus();
   room.onPeerJoin((id) => {
@@ -126,11 +137,22 @@ function go() {
 
 function addMsg(name, text, ts = Date.now(), save = true) {
   const cls = name === myName ? 'me' : 'them';
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-wrap ' + cls;
+  const showName = cls !== 'me' && name !== lastSender;
+  lastSender = name;
+  const label = document.createElement('div');
+  label.className = 'msg-name';
+  label.textContent = name;
+  if (!showName) label.style.display = 'none';
   const d = document.createElement('div');
-  d.className = 'msg ' + cls;
-  d.textContent = name + ': ' + text;
+  d.className = 'msg';
+  d.style.background = bubbleColor(name);
+  d.textContent = text;
+  wrap.appendChild(label);
+  wrap.appendChild(d);
   const m = document.getElementById('messages');
-  m.appendChild(d);
+  m.appendChild(wrap);
   m.scrollTop = m.scrollHeight;
   if (save) {
     const key = 'chat_' + currentRoom;
