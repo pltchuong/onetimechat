@@ -165,6 +165,7 @@ function addMsg(name, text, ts = Date.now(), save = true) {
   d.className = 'msg markdown-body';
   d.style.background = bubbleColor(name);
   d.innerHTML = DOMPurify.sanitize(marked.parse(text), { ADD_ATTR: ['target'] });
+  d.title = new Date(ts).toLocaleString();
   wrap.appendChild(label);
   wrap.appendChild(d);
   const m = document.getElementById('messages');
