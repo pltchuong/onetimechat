@@ -23,7 +23,6 @@
   .msg-wrap.me { align-self: flex-end; align-items: flex-end; }
   .msg-wrap.them { align-self: flex-start; align-items: flex-start; }
   .msg-name { font-size: 11px; margin-bottom: 1px; padding-left: 4px; color: #777; }
-  .sys { color: #999; font-size: 12px; text-align: center; max-width: 100%; align-self: center; }
   #topbar { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 12px; color: #999; }
   #status { cursor: default; position: relative; }
   #status-popup { display: none; position: absolute; top: 100%; left: 0; background: #fff; border: 1px solid #ddd; border-radius: 4px; padding: 6px 10px; font-size: 13px; color: #222; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.1); z-index: 10; }
@@ -66,7 +65,7 @@ document.addEventListener('touchmove', e => { if (e.touches.length > 1) e.preven
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
 <script type="module">
-import { joinRoom } from 'https://esm.sh/trystero@0.18.0/mqtt';
+import { joinRoom } from 'https://esm.sh/@trystero-p2p/mqtt';
 
 const renderer = new marked.Renderer();
 renderer.link = function({ href, text }) { return '<a href="' + href + '" target="_blank" rel="noopener">' + text + '</a>'; };
@@ -77,7 +76,7 @@ if (urlRoom) document.getElementById('room').value = urlRoom;
 const savedName = localStorage.getItem('chat_name');
 if (savedName) document.getElementById('name').value = savedName;
 
-let sendMsg, sendFile, myName, currentRoom = '', lastSender = '';
+let sendMsg, files, myName, currentRoom = '', lastSender = '';
 
 function nameHue(name) {
   let h = 2166136261;
@@ -105,21 +104,11 @@ function join() {
   history.replaceState(null, '', '?room=' + encodeURIComponent(r));
 
   const room = joinRoom({ appId: 'onetimechat-phan' }, r);
-  const [send, onMsg] = room.makeAction('chat');
-  const [sendSync, onSync] = room.makeAction('sync');
-  const [sendName, onName] = room.makeAction('name');
-  const [sendFileMeta, onFileMeta] = room.makeAction('fmeta');
-  const [sendFileChunk, onFileChunk] = room.makeAction('fchunk');
-  sendMsg = send;
-  sendFile = async (meta, b64) => {
-    sendFileMeta(meta);
-    const CHUNK = 8 * 1024;
-    const total = Math.ceil(b64.length / CHUNK);
-    for (let i = 0; i < total; i++) {
-      sendFileChunk({ id: meta.ts, i, total, data: b64.slice(i * CHUNK, (i + 1) * CHUNK) });
-      await new Promise(r => setTimeout(r, 20));
-    }
-  };
+  const chat = room.makeAction('chat');
+  const sync = room.makeAction('sync');
+  const names = room.makeAction('name');
+  files = room.makeAction('file');
+  sendMsg = chat.send;
 
   currentRoom = r;
   document.getElementById('setup').style.display = 'none';
@@ -137,56 +126,45 @@ function join() {
   };
   updateStatus();
   room.onPeerJoin((id) => {
-    sendName(myName, id);
+    names.send(myName, id);
     const h = JSON.parse(localStorage.getItem('chat_' + currentRoom) || '[]');
-    if (h.length) sendSync(h, id);
+    if (h.length) sync.send(h, id);
   });
   room.onPeerLeave((id) => { delete peers[id]; updateStatus(); });
-  onName((name, id) => { peers[id] = { n: name, t: Date.now() }; updateStatus(); });
-  setInterval(() => sendName(myName), 5000);
+  names.onMessage((name, id) => { peers[id] = { n: name, t: Date.now() }; updateStatus(); });
+  setInterval(() => names.send(myName), 5000);
   setInterval(updateStatus, 5000);
-  onMsg((d) => { addMsg(d.n, d.t, d.ts || Date.now()); ping(); });
-  const incomingFiles = {};
-  onFileMeta((d) => {
-    incomingFiles[d.ts] = { meta: d, chunks: [], received: 0 };
-    addFileProgress(d.n, d.name, d.ts);
+  chat.onMessage((d) => { addMsg(d.n, d.t, d.ts || Date.now()); ping(); });
+  files.onReceive(({ byteLength, metadata, userId }) => {
+    addFileProgress(peers[userId]?.n || 'unknown', metadata.name, metadata.id);
+    return true;
   });
-  onFileChunk((d) => {
-    try {
-      const f = incomingFiles[d.id];
-      if (!f) return;
-      f.chunks[d.i] = d.data;
-      f.received++;
-      updateFileProgress(d.id, f.received / d.total);
-      if (f.received === d.total) {
-        const b64 = f.chunks.join('');
-        const m = f.meta;
-        completeFileProgress(m.ts, m.n, m.name, m.type, b64);
-        saveFilePlaceholder(m.n, m.name, b64.length * 0.75, m.ts);
-        delete incomingFiles[d.id];
-        ping();
-      }
-    } catch (e) {}
+  files.onReceiveProgress((progress, { userId, metadata }) => {
+    updateFileProgress(metadata.id, progress);
   });
-  onSync((remote) => mergeHistory(remote));
+  files.onMessage((bytes, { userId, metadata }) => {
+    const sender = peers[userId]?.n || 'unknown';
+    const blob = new Blob([bytes], { type: metadata.type });
+    completeFileProgress(metadata.id, sender, metadata.name, metadata.type, blob);
+    saveFilePlaceholder(sender, metadata.name, blob.size, Date.now());
+    ping();
+  });
+  sync.onMessage((remote) => mergeHistory(remote));
 }
 
 document.getElementById('go').onclick = join;
 document.getElementById('send').onclick = go;
 document.getElementById('file-input').onchange = async (e) => {
   const file = e.target.files[0];
-  if (!file || !sendFile) return;
+  if (!file || !files) return;
   const MAX = 50 * 1024 * 1024;
   if (file.size > MAX) { alert('File too large (max 50MB)'); return; }
-  const buf = await file.arrayBuffer();
-  const bytes = new Uint8Array(buf);
-  let bin = '';
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  const b64 = btoa(bin);
-  const ts = Date.now();
-  addFileMsg(myName, file.name, file.type, b64, ts);
-  saveFilePlaceholder(myName, file.name, file.size, ts);
-  await sendFile({ n: myName, name: file.name, type: file.type, ts, size: file.size }, b64);
+  const id = Date.now() + '-' + Math.random().toString(36).slice(2);
+  addFileMsg(myName, file.name, file.type, file, Date.now());
+  saveFilePlaceholder(myName, file.name, file.size, Date.now());
+  await files.send(file, {
+    metadata: { id, name: file.name, type: file.type }
+  });
   e.target.value = '';
 };
 const msgEl = document.getElementById('msg');
@@ -195,21 +173,18 @@ msgEl.oninput = () => { msgEl.style.height = 'auto'; msgEl.style.height = msgEl.
 
 document.addEventListener('paste', async (e) => {
   const items = e.clipboardData?.items;
-  if (!items || !sendFile) return;
+  if (!items || !files) return;
   for (const item of items) {
     if (!item.type.startsWith('image/')) continue;
     e.preventDefault();
     const file = item.getAsFile();
-    const buf = await file.arrayBuffer();
-    const bytes = new Uint8Array(buf);
-    let bin = '';
-    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-    const b64 = btoa(bin);
     const name = 'clipboard-' + Date.now() + '.' + file.type.split('/')[1];
-    const ts = Date.now();
-    addFileMsg(myName, name, file.type, b64, ts);
-    saveFilePlaceholder(myName, name, file.size, ts);
-    await sendFile({ n: myName, name, type: file.type, ts, size: file.size }, b64);
+    const id = Date.now() + '-' + Math.random().toString(36).slice(2);
+    addFileMsg(myName, name, file.type, file, Date.now());
+    saveFilePlaceholder(myName, name, file.size, Date.now());
+    await files.send(file, {
+      metadata: { id, name, type: file.type }
+    });
     break;
   }
 });
@@ -256,7 +231,7 @@ function addMsg(name, text, ts = Date.now(), save = true) {
   }
 }
 
-function addFileMsg(sender, fileName, fileType, b64, ts = Date.now()) {
+function addFileMsg(sender, fileName, fileType, blob, ts = Date.now()) {
   const cls = sender === myName ? 'me' : 'them';
   const wrap = document.createElement('div');
   wrap.className = 'msg-wrap ' + cls;
@@ -270,8 +245,6 @@ function addFileMsg(sender, fileName, fileType, b64, ts = Date.now()) {
   d.className = 'msg';
   d.style.background = bubbleColor(sender);
   d.title = new Date(ts).toLocaleString();
-  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-  const blob = new Blob([bytes], { type: fileType });
   const url = URL.createObjectURL(blob);
   const container = document.createElement('div');
   container.className = 'file-msg';
@@ -289,7 +262,7 @@ function addFileMsg(sender, fileName, fileType, b64, ts = Date.now()) {
   container.appendChild(a);
   const size = document.createElement('span');
   size.className = 'file-size';
-  const kb = bytes.length / 1024;
+  const kb = blob.size / 1024;
   size.textContent = kb > 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.round(kb) + ' KB';
   container.appendChild(size);
   d.appendChild(container);
@@ -314,7 +287,7 @@ function addFileProgress(sender, fileName, id) {
   const d = document.createElement('div');
   d.className = 'msg';
   d.style.background = bubbleColor(sender);
-  d.innerHTML = '<div class="file-msg"><span class="file-status" style="font-size:13px">Receiving ' + DOMPurify.sanitize(fileName) + ' (0%)</span></div>';
+  d.innerHTML = '<div class="file-msg"><span class="file-status" style="font-size:13px">Receiving ' + DOMPurify.sanitize(fileName) + '...</span></div>';
   wrap.appendChild(label);
   wrap.appendChild(d);
   const m = document.getElementById('messages');
@@ -327,14 +300,14 @@ function updateFileProgress(id, pct) {
   if (!el) return;
   const p = Math.round(pct * 100);
   const status = el.querySelector('.file-status');
-  if (status) status.textContent = status.textContent.replace(/\(\d+%\)/, '(' + p + '%)');
+  if (status) status.textContent = status.textContent.replace(/\.\.\..*/, '... ' + p + '%');
   document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
 }
 
-function completeFileProgress(id, sender, fileName, fileType, b64) {
+function completeFileProgress(id, sender, fileName, fileType, blob) {
   const el = document.getElementById('fp-' + id);
   if (el) el.remove();
-  addFileMsg(sender, fileName, fileType, b64, id);
+  addFileMsg(sender, fileName, fileType, blob, id);
 }
 
 function saveFilePlaceholder(name, fileName, sizeBytes, ts) {
@@ -342,17 +315,8 @@ function saveFilePlaceholder(name, fileName, sizeBytes, ts) {
   const h = JSON.parse(localStorage.getItem(key) || '[]');
   const kb = sizeBytes / 1024;
   const sizeStr = kb > 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.round(kb) + ' KB';
-  h.push({ name, text: '[File: ' + fileName + ' (' + sizeStr + ')]', ts, isFile: true });
+  h.push({ name, text: '[File: ' + fileName + ' (' + sizeStr + ')]', ts });
   localStorage.setItem(key, JSON.stringify(h));
-}
-
-function addSys(text) {
-  const d = document.createElement('div');
-  d.className = 'msg sys';
-  d.textContent = text;
-  const m = document.getElementById('messages');
-  m.appendChild(d);
-  m.scrollTop = m.scrollHeight;
 }
 
 function loadHistory(room) {
