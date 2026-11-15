@@ -9,33 +9,38 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html { touch-action: pan-x pan-y; }
   body { font-family: sans-serif; background: #fff; color: #222; height: 100vh; display: flex; flex-direction: column; }
+
   #setup { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; gap: 10px; }
   input, button { padding: 8px 14px; font-size: 16px; border-radius: 4px; border: 1px solid #ccc; background: #fff; color: #222; }
   button { cursor: pointer; background: #eef; border: 1px solid #aac; }
+
   #chat { display: none; flex-direction: column; height: 100vh; }
+  #topbar { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 12px; color: #999; }
+  #room-label { font-size: 18px; font-weight: bold; color: #222; }
+  #logout { font-size: 12px; background: none; border: none; color: #999; cursor: pointer; }
+  #status { cursor: default; position: relative; }
+  #status-popup { display: none; position: absolute; top: 100%; left: 0; background: #fff; border: 1px solid #ddd; border-radius: 4px; padding: 6px 10px; font-size: 13px; color: #222; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.1); z-index: 10; }
+  #status:hover #status-popup { display: block; }
+
   #messages { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 4px; }
-  .msg { padding: 8px 12px; border-radius: 5px; font-size: 14px; width: fit-content; }
-  .msg.markdown-body { background: transparent; font-size: 14px; padding: 8px 12px; }
-  .msg.markdown-body > *:first-child { margin-top: 0; }
-  .msg.markdown-body > *:last-child { margin-bottom: 0; }
   .msg-wrap { max-width: 75%; display: flex; flex-direction: column; margin-top: 2px; }
   .msg-wrap:has(.msg-name:not([style*="display: none"])) { margin-top: 10px; }
   .msg-wrap.me { align-self: flex-end; align-items: flex-end; }
   .msg-wrap.them { align-self: flex-start; align-items: flex-start; }
   .msg-name { font-size: 11px; margin-bottom: 1px; padding-left: 4px; color: #777; }
-  #topbar { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 12px; color: #999; }
-  #status { cursor: default; position: relative; }
-  #status-popup { display: none; position: absolute; top: 100%; left: 0; background: #fff; border: 1px solid #ddd; border-radius: 4px; padding: 6px 10px; font-size: 13px; color: #222; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.1); z-index: 10; }
-  #status:hover #status-popup { display: block; }
-  #room-label { font-size: 18px; font-weight: bold; color: #222; }
-  #logout { font-size: 12px; background: none; border: none; color: #999; cursor: pointer; }
-  #bar { display: flex; gap: 6px; padding: 8px; background: #f8f8f8; border-top: 1px solid #ddd; align-items: flex-end; }
-  #bar textarea { flex: 1; resize: none; font-family: sans-serif; padding: 8px 14px; font-size: 16px; border-radius: 4px; border: 1px solid #ccc; max-height: 120px; overflow-y: auto; }
-  #file-btn { font-size: 22px; cursor: pointer; padding: 4px; user-select: none; }
+  .msg { padding: 8px 12px; border-radius: 5px; font-size: 14px; width: fit-content; }
+  .msg.markdown-body { background: transparent; font-size: 14px; padding: 8px 12px; }
+  .msg.markdown-body > *:first-child { margin-top: 0; }
+  .msg.markdown-body > *:last-child { margin-bottom: 0; }
+
   .file-msg { display: flex; flex-direction: column; gap: 4px; }
   .file-msg img { max-width: 240px; max-height: 200px; border-radius: 4px; cursor: pointer; }
   .file-msg a { color: #36c; font-size: 13px; word-break: break-all; }
   .file-size { font-size: 11px; color: #999; }
+
+  #bar { display: flex; gap: 6px; padding: 8px; background: #f8f8f8; border-top: 1px solid #ddd; align-items: flex-end; }
+  #bar textarea { flex: 1; resize: none; font-family: sans-serif; padding: 8px 14px; font-size: 16px; border-radius: 4px; border: 1px solid #ccc; max-height: 120px; overflow-y: auto; }
+  #file-btn { font-size: 22px; cursor: pointer; padding: 4px; user-select: none; }
 </style>
 </head>
 <body>
@@ -68,6 +73,7 @@ document.addEventListener('touchmove', e => { if (e.touches.length > 1) e.preven
 import { joinRoom } from 'https://esm.sh/@trystero-p2p/mqtt';
 
 const $ = id => document.getElementById(id);
+
 function el(tag, attrs = {}, children = []) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -83,24 +89,20 @@ function el(tag, attrs = {}, children = []) {
   return e;
 }
 
-const renderer = new marked.Renderer();
-renderer.link = function({ href, text }) { return '<a href="' + href + '" target="_blank" rel="noopener">' + text + '</a>'; };
-marked.setOptions({ renderer });
-
-const urlRoom = new URLSearchParams(location.search).get('room');
-if (urlRoom) $('room').value = urlRoom;
-const savedName = localStorage.getItem('chat_name');
-if (savedName) $('name').value = savedName;
-
-let sendMsg, files, myName, currentRoom = '', lastSender = '';
+function scrollDown() { const m = $('messages'); m.scrollTop = m.scrollHeight; }
 
 function nameHue(name) {
   let h = 2166136261;
   for (let i = 0; i < name.length; i++) { h ^= name.charCodeAt(i); h = Math.imul(h, 16777619); }
-  return ((h >>> 0) % 360);
+  return (h >>> 0) % 360;
 }
 function nameColor(name) { return 'hsl(' + nameHue(name) + ', 70%, 40%)'; }
 function bubbleColor(name) { return 'hsl(' + nameHue(name) + ', 80%, 90%)'; }
+
+function sizeLabel(bytes) {
+  const kb = bytes / 1024;
+  return kb > 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.round(kb) + ' KB';
+}
 
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 function ping() {
@@ -112,128 +114,50 @@ function ping() {
   o.start(); o.stop(audioCtx.currentTime + 0.1);
 }
 
-function join() {
-  myName = $('name').value.trim();
-  const r = $('room').value.trim();
-  if (!myName || !r) return;
-  localStorage.setItem('chat_name', myName);
-  history.replaceState(null, '', '?room=' + encodeURIComponent(r));
-
-  const room = joinRoom({ appId: 'onetimechat-phan' }, r);
-  const chat = room.makeAction('chat');
-  const sync = room.makeAction('sync');
-  const profile = room.makeUserState('profile', { name: 'Anon' });
-  files = room.makeAction('file');
-  sendMsg = chat.send;
-
-  currentRoom = r;
-  $('setup').style.display = 'none';
-  $('chat').style.display = 'flex';
-  $('room-label').textContent = r;
-  loadHistory(r);
-
-  profile.set({ name: myName });
-
-  const peerName = (userId) => {
-    const all = profile.getAll();
-    return all[userId]?.name || 'unknown';
-  };
-
-  const updateStatus = () => {
-    const all = profile.getAll();
-    const onlineNames = [myName, ...Object.values(all).map(p => p.name).filter(n => n !== myName)];
-    $('status-text').textContent = onlineNames.length + ' online';
-    $('status-popup').innerHTML = onlineNames.map(n => '<div style="color:' + nameColor(n) + '">' + n + '</div>').join('');
-  };
-  updateStatus();
-
-  room.onUserJoin(({ userId }) => {
-    updateStatus();
-    const h = JSON.parse(localStorage.getItem('chat_' + currentRoom) || '[]');
-    if (h.length) sync.send(h, userId);
-  });
-  room.onUserLeave(() => updateStatus());
-  profile.onChange(() => updateStatus());
-
-  chat.onMessage((d) => { addMsg(d.n, d.t, d.ts || Date.now()); ping(); });
-  files.onReceive(({ byteLength, metadata, userId }) => {
-    addFileProgress(metadata.sender || peerName(userId), metadata.name, metadata.id);
-    return true;
-  });
-  files.onReceiveProgress((progress, { userId, metadata }) => {
-    updateFileProgress(metadata.id, progress);
-  });
-  files.onMessage((bytes, { userId, metadata }) => {
-    const sender = metadata.sender || peerName(userId);
-    const blob = new Blob([bytes], { type: metadata.type });
-    completeFileProgress(metadata.id, sender, metadata.name, metadata.type, blob);
-    saveFilePlaceholder(sender, metadata.name, blob.size, metadata.ts || Date.now());
-    ping();
-  });
-  sync.onMessage((remote) => mergeHistory(remote));
-}
-
-$('go').onclick = join;
-$('name').onkeydown = e => { if (e.key === 'Enter') join(); };
-$('room').onkeydown = e => { if (e.key === 'Enter') join(); };
-$('send').onclick = go;
-$('file-input').onchange = async (e) => {
-  const file = e.target.files[0];
-  if (!file || !files) return;
-  const MAX = 50 * 1024 * 1024;
-  if (file.size > MAX) { alert('File too large (max 50MB)'); return; }
-  const id = Date.now() + '-' + Math.random().toString(36).slice(2);
-  const ts = Date.now();
-  addFileMsg(myName, file.name, file.type, file, ts);
-  saveFilePlaceholder(myName, file.name, file.size, ts);
-  await files.send(file, {
-    metadata: { id, name: file.name, type: file.type, sender: myName, ts }
-  });
-  e.target.value = '';
+const renderer = new marked.Renderer();
+renderer.link = function({ href, text }) {
+  return '<a href="' + href + '" target="_blank" rel="noopener">' + text + '</a>';
 };
-const msgEl = $('msg');
-msgEl.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go(); } };
-msgEl.oninput = () => { msgEl.style.height = 'auto'; msgEl.style.height = msgEl.scrollHeight + 'px'; };
+marked.setOptions({ renderer });
 
-document.addEventListener('paste', async (e) => {
-  const items = e.clipboardData?.items;
-  if (!items || !files) return;
-  for (const item of items) {
-    if (!item.type.startsWith('image/')) continue;
-    e.preventDefault();
-    const file = item.getAsFile();
-    const name = 'clipboard-' + Date.now() + '.' + file.type.split('/')[1];
-    const id = Date.now() + '-' + Math.random().toString(36).slice(2);
-    const ts = Date.now();
-    addFileMsg(myName, name, file.type, file, ts);
-    saveFilePlaceholder(myName, name, file.size, ts);
-    await files.send(file, {
-      metadata: { id, name, type: file.type, sender: myName, ts }
-    });
-    break;
-  }
-});
+let sendMsg, files, myName, currentRoom = '', lastSender = '';
 
-if (savedName && urlRoom) join();
+const urlRoom = new URLSearchParams(location.search).get('room');
+if (urlRoom) $('room').value = urlRoom;
+const savedName = localStorage.getItem('chat_name');
+if (savedName) $('name').value = savedName;
 
-function go() {
-  const t = msgEl.value.trim();
-  if (!t || !sendMsg) return;
-  const ts = Date.now();
-  sendMsg({ n: myName, t, ts });
-  addMsg(myName, t, ts);
-  msgEl.value = '';
-  msgEl.style.height = 'auto';
+function getHistory() { return JSON.parse(localStorage.getItem('chat_' + currentRoom) || '[]'); }
+function setHistory(h) { localStorage.setItem('chat_' + currentRoom, JSON.stringify(h)); }
+
+function loadHistory() {
+  getHistory().forEach(m => addMsg(m.name, m.text, m.ts, false));
 }
 
-function scrollDown() { const m = $('messages'); m.scrollTop = m.scrollHeight; }
+function mergeHistory(remote) {
+  const local = getHistory();
+  const localSet = new Set(local.map(m => m.ts + '|' + m.name + '|' + m.text));
+  const newMsgs = remote.filter(m => !localSet.has(m.ts + '|' + m.name + '|' + m.text));
+  if (!newMsgs.length) return;
+  const merged = [...local, ...newMsgs].sort((a, b) => a.ts - b.ts);
+  setHistory(merged);
+  $('messages').innerHTML = '';
+  lastSender = '';
+  merged.forEach(m => addMsg(m.name, m.text, m.ts, false));
+}
 
-function msgWrap(name, showLabel, children) {
+function saveFilePlaceholder(name, fileName, sizeBytes, ts) {
+  const h = getHistory();
+  h.push({ name, text: '[File: ' + fileName + ' (' + sizeLabel(sizeBytes) + ')]', ts });
+  setHistory(h);
+}
+
+function msgWrap(name, children) {
   const cls = name === myName ? 'me' : 'them';
-  const show = cls !== 'me' && name !== lastSender;
+  const showLabel = cls !== 'me' && name !== lastSender;
   lastSender = name;
   const label = el('div', { class: 'msg-name', text: name });
-  if (!(showLabel ?? show)) label.style.display = 'none';
+  if (!showLabel) label.style.display = 'none';
   const wrap = el('div', { class: 'msg-wrap ' + cls }, [label, ...children]);
   $('messages').appendChild(wrap);
   scrollDown();
@@ -247,18 +171,12 @@ function addMsg(name, text, ts = Date.now(), save = true) {
     title: new Date(ts).toLocaleString(),
     html: DOMPurify.sanitize(marked.parse(text), { ADD_ATTR: ['target'] })
   });
-  msgWrap(name, null, [d]);
+  msgWrap(name, [d]);
   if (save) {
-    const key = 'chat_' + currentRoom;
-    const h = JSON.parse(localStorage.getItem(key) || '[]');
+    const h = getHistory();
     h.push({ name, text, ts });
-    localStorage.setItem(key, JSON.stringify(h));
+    setHistory(h);
   }
-}
-
-function sizeLabel(bytes) {
-  const kb = bytes / 1024;
-  return kb > 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.round(kb) + ' KB';
 }
 
 function addFileMsg(sender, fileName, fileType, blob, ts = Date.now()) {
@@ -273,7 +191,7 @@ function addFileMsg(sender, fileName, fileType, blob, ts = Date.now()) {
     style: { background: bubbleColor(sender) },
     title: new Date(ts).toLocaleString()
   }, [el('div', { class: 'file-msg' }, items)]);
-  msgWrap(sender, null, [d]);
+  msgWrap(sender, [d]);
 }
 
 function addFileProgress(sender, fileName, id) {
@@ -283,7 +201,7 @@ function addFileProgress(sender, fileName, id) {
   }, [el('div', { class: 'file-msg' }, [
     el('span', { class: 'file-status', style: { fontSize: '13px' }, text: 'Receiving ' + fileName + '...' })
   ])]);
-  const wrap = msgWrap(sender, null, [d]);
+  const wrap = msgWrap(sender, [d]);
   wrap.id = 'fp-' + id;
 }
 
@@ -298,33 +216,113 @@ function updateFileProgress(id, pct) {
 function completeFileProgress(id, sender, fileName, fileType, blob) {
   const fp = $('fp-' + id);
   if (fp) fp.remove();
-  addFileMsg(sender, fileName, fileType, blob, id);
+  addFileMsg(sender, fileName, fileType, blob);
 }
 
-function saveFilePlaceholder(name, fileName, sizeBytes, ts) {
-  const key = 'chat_' + currentRoom;
-  const h = JSON.parse(localStorage.getItem(key) || '[]');
-  h.push({ name, text: '[File: ' + fileName + ' (' + sizeLabel(sizeBytes) + ')]', ts });
-  localStorage.setItem(key, JSON.stringify(h));
+function sendText() {
+  const t = msgEl.value.trim();
+  if (!t || !sendMsg) return;
+  const ts = Date.now();
+  sendMsg({ n: myName, t, ts });
+  addMsg(myName, t, ts);
+  msgEl.value = '';
+  msgEl.style.height = 'auto';
 }
 
-function loadHistory(room) {
-  currentRoom = room;
-  const h = JSON.parse(localStorage.getItem('chat_' + room) || '[]');
-  h.forEach(m => addMsg(m.name, m.text, m.ts, false));
+async function sendFile(file, fileName) {
+  if (!files) return;
+  if (file.size > 50 * 1024 * 1024) { alert('File too large (max 50MB)'); return; }
+  const id = Date.now() + '-' + Math.random().toString(36).slice(2);
+  const ts = Date.now();
+  addFileMsg(myName, fileName, file.type, file, ts);
+  saveFilePlaceholder(myName, fileName, file.size, ts);
+  await files.send(file, { metadata: { id, name: fileName, type: file.type, sender: myName, ts } });
 }
 
-function mergeHistory(remote) {
-  const key = 'chat_' + currentRoom;
-  const local = JSON.parse(localStorage.getItem(key) || '[]');
-  const localSet = new Set(local.map(m => m.ts + '|' + m.name + '|' + m.text));
-  const newMsgs = remote.filter(m => !localSet.has(m.ts + '|' + m.name + '|' + m.text));
-  if (!newMsgs.length) return;
-  const merged = [...local, ...newMsgs].sort((a, b) => a.ts - b.ts);
-  localStorage.setItem(key, JSON.stringify(merged));
-  $('messages').innerHTML = '';
-  merged.forEach(m => addMsg(m.name, m.text, m.ts, false));
+function join() {
+  myName = $('name').value.trim();
+  const r = $('room').value.trim();
+  if (!myName || !r) return;
+  localStorage.setItem('chat_name', myName);
+  currentRoom = r;
+  history.replaceState(null, '', '?room=' + encodeURIComponent(r));
+
+  $('setup').style.display = 'none';
+  $('chat').style.display = 'flex';
+  $('room-label').textContent = r;
+  loadHistory();
+
+  const room = joinRoom({ appId: 'onetimechat-phan' }, r);
+  const chat = room.makeAction('chat');
+  const sync = room.makeAction('sync');
+  const profile = room.makeUserState('profile', { name: 'Anon' });
+  files = room.makeAction('file');
+  sendMsg = chat.send;
+  profile.set({ name: myName });
+
+  const peerName = (userId) => profile.getAll()[userId]?.name || 'unknown';
+
+  const updateStatus = () => {
+    const all = profile.getAll();
+    const names = [myName, ...Object.values(all).map(p => p.name).filter(n => n !== myName)];
+    $('status-text').textContent = names.length + ' online';
+    $('status-popup').innerHTML = names.map(n => '<div style="color:' + nameColor(n) + '">' + n + '</div>').join('');
+  };
+  updateStatus();
+
+  room.onUserJoin(({ userId }) => {
+    updateStatus();
+    const h = getHistory();
+    if (h.length) sync.send(h, userId);
+  });
+  room.onUserLeave(() => updateStatus());
+  profile.onChange(() => updateStatus());
+
+  chat.onMessage((d) => { addMsg(d.n, d.t, d.ts || Date.now()); ping(); });
+  sync.onMessage((remote) => mergeHistory(remote));
+
+  files.onReceive(({ metadata, userId }) => {
+    addFileProgress(metadata.sender || peerName(userId), metadata.name, metadata.id);
+    return true;
+  });
+  files.onReceiveProgress((progress, { metadata }) => {
+    updateFileProgress(metadata.id, progress);
+  });
+  files.onMessage((bytes, { userId, metadata }) => {
+    const sender = metadata.sender || peerName(userId);
+    const blob = new Blob([bytes], { type: metadata.type });
+    completeFileProgress(metadata.id, sender, metadata.name, metadata.type, blob);
+    saveFilePlaceholder(sender, metadata.name, blob.size, metadata.ts || Date.now());
+    ping();
+  });
 }
+
+const msgEl = $('msg');
+
+$('go').onclick = join;
+$('name').onkeydown = e => { if (e.key === 'Enter') join(); };
+$('room').onkeydown = e => { if (e.key === 'Enter') join(); };
+$('send').onclick = sendText;
+msgEl.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendText(); } };
+msgEl.oninput = () => { msgEl.style.height = 'auto'; msgEl.style.height = msgEl.scrollHeight + 'px'; };
+
+$('file-input').onchange = async (e) => {
+  const file = e.target.files[0];
+  if (file) { await sendFile(file, file.name); e.target.value = ''; }
+};
+
+document.addEventListener('paste', async (e) => {
+  const items = e.clipboardData?.items;
+  if (!items || !files) return;
+  for (const item of items) {
+    if (!item.type.startsWith('image/')) continue;
+    e.preventDefault();
+    await sendFile(item.getAsFile(), 'clipboard-' + Date.now() + '.' + item.type.split('/')[1]);
+    break;
+  }
+});
+
+if (savedName && urlRoom) join();
 </script>
 </body>
 </html>
