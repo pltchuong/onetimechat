@@ -67,14 +67,30 @@ document.addEventListener('touchmove', e => { if (e.touches.length > 1) e.preven
 <script type="module">
 import { joinRoom } from 'https://esm.sh/@trystero-p2p/mqtt';
 
+const $ = id => document.getElementById(id);
+function el(tag, attrs = {}, children = []) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'text') e.textContent = v;
+    else if (k === 'html') e.innerHTML = v;
+    else if (k.startsWith('on')) e[k] = v;
+    else if (k === 'style' && typeof v === 'object') Object.assign(e.style, v);
+    else e.setAttribute(k, v);
+  }
+  for (const c of [].concat(children)) {
+    e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  }
+  return e;
+}
+
 const renderer = new marked.Renderer();
 renderer.link = function({ href, text }) { return '<a href="' + href + '" target="_blank" rel="noopener">' + text + '</a>'; };
 marked.setOptions({ renderer });
 
 const urlRoom = new URLSearchParams(location.search).get('room');
-if (urlRoom) document.getElementById('room').value = urlRoom;
+if (urlRoom) $('room').value = urlRoom;
 const savedName = localStorage.getItem('chat_name');
-if (savedName) document.getElementById('name').value = savedName;
+if (savedName) $('name').value = savedName;
 
 let sendMsg, files, myName, currentRoom = '', lastSender = '';
 
@@ -97,8 +113,8 @@ function ping() {
 }
 
 function join() {
-  myName = document.getElementById('name').value.trim();
-  const r = document.getElementById('room').value.trim();
+  myName = $('name').value.trim();
+  const r = $('room').value.trim();
   if (!myName || !r) return;
   localStorage.setItem('chat_name', myName);
   history.replaceState(null, '', '?room=' + encodeURIComponent(r));
@@ -106,68 +122,76 @@ function join() {
   const room = joinRoom({ appId: 'onetimechat-phan' }, r);
   const chat = room.makeAction('chat');
   const sync = room.makeAction('sync');
-  const names = room.makeAction('name');
+  const profile = room.makeUserState('profile', { name: 'Anon' });
   files = room.makeAction('file');
   sendMsg = chat.send;
 
   currentRoom = r;
-  document.getElementById('setup').style.display = 'none';
-  document.getElementById('chat').style.display = 'flex';
-  document.getElementById('room-label').textContent = r;
+  $('setup').style.display = 'none';
+  $('chat').style.display = 'flex';
+  $('room-label').textContent = r;
   loadHistory(r);
 
-  const peers = {};
+  profile.set({ name: myName });
+
+  const peerName = (userId) => {
+    const all = profile.getAll();
+    return all[userId]?.name || 'unknown';
+  };
+
   const updateStatus = () => {
-    const now = Date.now();
-    Object.keys(peers).forEach(id => { if (now - peers[id].t > 8000) delete peers[id]; });
-    const names = [myName, ...Object.values(peers).map(p => p.n)];
-    document.getElementById('status-text').textContent = names.length + ' online';
-    document.getElementById('status-popup').innerHTML = names.map(n => '<div style="color:' + nameColor(n) + '">' + n + '</div>').join('');
+    const all = profile.getAll();
+    const onlineNames = [myName, ...Object.values(all).map(p => p.name).filter(n => n !== myName)];
+    $('status-text').textContent = onlineNames.length + ' online';
+    $('status-popup').innerHTML = onlineNames.map(n => '<div style="color:' + nameColor(n) + '">' + n + '</div>').join('');
   };
   updateStatus();
-  room.onPeerJoin((id) => {
-    names.send(myName, id);
+
+  room.onUserJoin(({ userId }) => {
+    updateStatus();
     const h = JSON.parse(localStorage.getItem('chat_' + currentRoom) || '[]');
-    if (h.length) sync.send(h, id);
+    if (h.length) sync.send(h, userId);
   });
-  room.onPeerLeave((id) => { delete peers[id]; updateStatus(); });
-  names.onMessage((name, id) => { peers[id] = { n: name, t: Date.now() }; updateStatus(); });
-  setInterval(() => names.send(myName), 5000);
-  setInterval(updateStatus, 5000);
+  room.onUserLeave(() => updateStatus());
+  profile.onChange(() => updateStatus());
+
   chat.onMessage((d) => { addMsg(d.n, d.t, d.ts || Date.now()); ping(); });
   files.onReceive(({ byteLength, metadata, userId }) => {
-    addFileProgress(peers[userId]?.n || 'unknown', metadata.name, metadata.id);
+    addFileProgress(metadata.sender || peerName(userId), metadata.name, metadata.id);
     return true;
   });
   files.onReceiveProgress((progress, { userId, metadata }) => {
     updateFileProgress(metadata.id, progress);
   });
   files.onMessage((bytes, { userId, metadata }) => {
-    const sender = peers[userId]?.n || 'unknown';
+    const sender = metadata.sender || peerName(userId);
     const blob = new Blob([bytes], { type: metadata.type });
     completeFileProgress(metadata.id, sender, metadata.name, metadata.type, blob);
-    saveFilePlaceholder(sender, metadata.name, blob.size, Date.now());
+    saveFilePlaceholder(sender, metadata.name, blob.size, metadata.ts || Date.now());
     ping();
   });
   sync.onMessage((remote) => mergeHistory(remote));
 }
 
-document.getElementById('go').onclick = join;
-document.getElementById('send').onclick = go;
-document.getElementById('file-input').onchange = async (e) => {
+$('go').onclick = join;
+$('name').onkeydown = e => { if (e.key === 'Enter') join(); };
+$('room').onkeydown = e => { if (e.key === 'Enter') join(); };
+$('send').onclick = go;
+$('file-input').onchange = async (e) => {
   const file = e.target.files[0];
   if (!file || !files) return;
   const MAX = 50 * 1024 * 1024;
   if (file.size > MAX) { alert('File too large (max 50MB)'); return; }
   const id = Date.now() + '-' + Math.random().toString(36).slice(2);
-  addFileMsg(myName, file.name, file.type, file, Date.now());
-  saveFilePlaceholder(myName, file.name, file.size, Date.now());
+  const ts = Date.now();
+  addFileMsg(myName, file.name, file.type, file, ts);
+  saveFilePlaceholder(myName, file.name, file.size, ts);
   await files.send(file, {
-    metadata: { id, name: file.name, type: file.type }
+    metadata: { id, name: file.name, type: file.type, sender: myName, ts }
   });
   e.target.value = '';
 };
-const msgEl = document.getElementById('msg');
+const msgEl = $('msg');
 msgEl.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go(); } };
 msgEl.oninput = () => { msgEl.style.height = 'auto'; msgEl.style.height = msgEl.scrollHeight + 'px'; };
 
@@ -180,10 +204,11 @@ document.addEventListener('paste', async (e) => {
     const file = item.getAsFile();
     const name = 'clipboard-' + Date.now() + '.' + file.type.split('/')[1];
     const id = Date.now() + '-' + Math.random().toString(36).slice(2);
-    addFileMsg(myName, name, file.type, file, Date.now());
-    saveFilePlaceholder(myName, name, file.size, Date.now());
+    const ts = Date.now();
+    addFileMsg(myName, name, file.type, file, ts);
+    saveFilePlaceholder(myName, name, file.size, ts);
     await files.send(file, {
-      metadata: { id, name, type: file.type }
+      metadata: { id, name, type: file.type, sender: myName, ts }
     });
     break;
   }
@@ -192,37 +217,37 @@ document.addEventListener('paste', async (e) => {
 if (savedName && urlRoom) join();
 
 function go() {
-  const el = document.getElementById('msg');
-  const t = el.value.trim();
+  const t = msgEl.value.trim();
   if (!t || !sendMsg) return;
   const ts = Date.now();
   sendMsg({ n: myName, t, ts });
   addMsg(myName, t, ts);
-  el.value = '';
-  el.style.height = 'auto';
+  msgEl.value = '';
+  msgEl.style.height = 'auto';
+}
+
+function scrollDown() { const m = $('messages'); m.scrollTop = m.scrollHeight; }
+
+function msgWrap(name, showLabel, children) {
+  const cls = name === myName ? 'me' : 'them';
+  const show = cls !== 'me' && name !== lastSender;
+  lastSender = name;
+  const label = el('div', { class: 'msg-name', text: name });
+  if (!(showLabel ?? show)) label.style.display = 'none';
+  const wrap = el('div', { class: 'msg-wrap ' + cls }, [label, ...children]);
+  $('messages').appendChild(wrap);
+  scrollDown();
+  return wrap;
 }
 
 function addMsg(name, text, ts = Date.now(), save = true) {
-  const cls = name === myName ? 'me' : 'them';
-  const wrap = document.createElement('div');
-  wrap.className = 'msg-wrap ' + cls;
-  const showName = cls !== 'me' && name !== lastSender;
-  lastSender = name;
-  const label = document.createElement('div');
-  label.className = 'msg-name';
-  label.textContent = name;
-  if (!showName) label.style.display = 'none';
-  const d = document.createElement('div');
-  d.className = 'msg markdown-body';
-  d.style.background = bubbleColor(name);
-  d.innerHTML = DOMPurify.sanitize(marked.parse(text), { ADD_ATTR: ['target'] });
-  if (text.startsWith('[File: ')) d.style.fontStyle = 'italic';
-  d.title = new Date(ts).toLocaleString();
-  wrap.appendChild(label);
-  wrap.appendChild(d);
-  const m = document.getElementById('messages');
-  m.appendChild(wrap);
-  m.scrollTop = m.scrollHeight;
+  const d = el('div', {
+    class: 'msg markdown-body',
+    style: { background: bubbleColor(name), fontStyle: text.startsWith('[File: ') ? 'italic' : '' },
+    title: new Date(ts).toLocaleString(),
+    html: DOMPurify.sanitize(marked.parse(text), { ADD_ATTR: ['target'] })
+  });
+  msgWrap(name, null, [d]);
   if (save) {
     const key = 'chat_' + currentRoom;
     const h = JSON.parse(localStorage.getItem(key) || '[]');
@@ -231,91 +256,55 @@ function addMsg(name, text, ts = Date.now(), save = true) {
   }
 }
 
+function sizeLabel(bytes) {
+  const kb = bytes / 1024;
+  return kb > 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.round(kb) + ' KB';
+}
+
 function addFileMsg(sender, fileName, fileType, blob, ts = Date.now()) {
-  const cls = sender === myName ? 'me' : 'them';
-  const wrap = document.createElement('div');
-  wrap.className = 'msg-wrap ' + cls;
-  const showName = cls !== 'me' && sender !== lastSender;
-  lastSender = sender;
-  const label = document.createElement('div');
-  label.className = 'msg-name';
-  label.textContent = sender;
-  if (!showName) label.style.display = 'none';
-  const d = document.createElement('div');
-  d.className = 'msg';
-  d.style.background = bubbleColor(sender);
-  d.title = new Date(ts).toLocaleString();
   const url = URL.createObjectURL(blob);
-  const container = document.createElement('div');
-  container.className = 'file-msg';
-  if (fileType.startsWith('image/')) {
-    const img = document.createElement('img');
-    img.src = url;
-    img.onclick = () => window.open(url, '_blank');
-    container.appendChild(img);
-  }
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileName;
-  a.target = '_blank';
-  a.textContent = fileName;
-  container.appendChild(a);
-  const size = document.createElement('span');
-  size.className = 'file-size';
-  const kb = blob.size / 1024;
-  size.textContent = kb > 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.round(kb) + ' KB';
-  container.appendChild(size);
-  d.appendChild(container);
-  wrap.appendChild(label);
-  wrap.appendChild(d);
-  const m = document.getElementById('messages');
-  m.appendChild(wrap);
-  m.scrollTop = m.scrollHeight;
+  const items = [];
+  if (fileType.startsWith('image/'))
+    items.push(el('img', { src: url, onclick: () => window.open(url, '_blank') }));
+  items.push(el('a', { href: url, download: fileName, target: '_blank', text: fileName }));
+  items.push(el('span', { class: 'file-size', text: sizeLabel(blob.size) }));
+  const d = el('div', {
+    class: 'msg',
+    style: { background: bubbleColor(sender) },
+    title: new Date(ts).toLocaleString()
+  }, [el('div', { class: 'file-msg' }, items)]);
+  msgWrap(sender, null, [d]);
 }
 
 function addFileProgress(sender, fileName, id) {
-  const cls = sender === myName ? 'me' : 'them';
-  const wrap = document.createElement('div');
-  wrap.className = 'msg-wrap ' + cls;
+  const d = el('div', {
+    class: 'msg',
+    style: { background: bubbleColor(sender) }
+  }, [el('div', { class: 'file-msg' }, [
+    el('span', { class: 'file-status', style: { fontSize: '13px' }, text: 'Receiving ' + fileName + '...' })
+  ])]);
+  const wrap = msgWrap(sender, null, [d]);
   wrap.id = 'fp-' + id;
-  const showName = cls !== 'me' && sender !== lastSender;
-  lastSender = sender;
-  const label = document.createElement('div');
-  label.className = 'msg-name';
-  label.textContent = sender;
-  if (!showName) label.style.display = 'none';
-  const d = document.createElement('div');
-  d.className = 'msg';
-  d.style.background = bubbleColor(sender);
-  d.innerHTML = '<div class="file-msg"><span class="file-status" style="font-size:13px">Receiving ' + DOMPurify.sanitize(fileName) + '...</span></div>';
-  wrap.appendChild(label);
-  wrap.appendChild(d);
-  const m = document.getElementById('messages');
-  m.appendChild(wrap);
-  m.scrollTop = m.scrollHeight;
 }
 
 function updateFileProgress(id, pct) {
-  const el = document.getElementById('fp-' + id);
-  if (!el) return;
-  const p = Math.round(pct * 100);
-  const status = el.querySelector('.file-status');
-  if (status) status.textContent = status.textContent.replace(/\.\.\..*/, '... ' + p + '%');
-  document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+  const fp = $('fp-' + id);
+  if (!fp) return;
+  const status = fp.querySelector('.file-status');
+  if (status) status.textContent = status.textContent.replace(/\.\.\..*/, '... ' + Math.round(pct * 100) + '%');
+  scrollDown();
 }
 
 function completeFileProgress(id, sender, fileName, fileType, blob) {
-  const el = document.getElementById('fp-' + id);
-  if (el) el.remove();
+  const fp = $('fp-' + id);
+  if (fp) fp.remove();
   addFileMsg(sender, fileName, fileType, blob, id);
 }
 
 function saveFilePlaceholder(name, fileName, sizeBytes, ts) {
   const key = 'chat_' + currentRoom;
   const h = JSON.parse(localStorage.getItem(key) || '[]');
-  const kb = sizeBytes / 1024;
-  const sizeStr = kb > 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.round(kb) + ' KB';
-  h.push({ name, text: '[File: ' + fileName + ' (' + sizeStr + ')]', ts });
+  h.push({ name, text: '[File: ' + fileName + ' (' + sizeLabel(sizeBytes) + ')]', ts });
   localStorage.setItem(key, JSON.stringify(h));
 }
 
@@ -333,7 +322,7 @@ function mergeHistory(remote) {
   if (!newMsgs.length) return;
   const merged = [...local, ...newMsgs].sort((a, b) => a.ts - b.ts);
   localStorage.setItem(key, JSON.stringify(merged));
-  document.getElementById('messages').innerHTML = '';
+  $('messages').innerHTML = '';
   merged.forEach(m => addMsg(m.name, m.text, m.ts, false));
 }
 </script>
