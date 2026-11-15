@@ -73,55 +73,29 @@ document.addEventListener('touchmove', e => { if (e.touches.length > 1) e.preven
 import { joinRoom } from 'https://esm.sh/@trystero-p2p/mqtt';
 
 const $ = id => document.getElementById(id);
-
-function el(tag, attrs = {}, children = []) {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === 'text') e.textContent = v;
-    else if (k === 'html') e.innerHTML = v;
-    else if (k.startsWith('on')) e[k] = v;
-    else if (k === 'style' && typeof v === 'object') Object.assign(e.style, v);
-    else e.setAttribute(k, v);
-  }
-  for (const c of [].concat(children)) {
-    e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
-  }
-  return e;
-}
+function el(t,a={},c=[]){const e=document.createElement(t);for(const[k,v]of Object.entries(a))k==='text'?e.textContent=v:k==='html'?e.innerHTML=v:k.startsWith('on')?e[k]=v:k==='style'&&typeof v==='object'?Object.assign(e.style,v):e.setAttribute(k,v);for(const n of[].concat(c))e.appendChild(typeof n==='string'?document.createTextNode(n):n);return e}
 
 function scrollDown() { const m = $('messages'); m.scrollTop = m.scrollHeight; }
-
-function nameHue(name) {
-  let h = 2166136261;
-  for (let i = 0; i < name.length; i++) { h ^= name.charCodeAt(i); h = Math.imul(h, 16777619); }
-  return (h >>> 0) % 360;
-}
-function nameColor(name) { return 'hsl(' + nameHue(name) + ', 70%, 40%)'; }
-function bubbleColor(name) { return 'hsl(' + nameHue(name) + ', 80%, 90%)'; }
-
-function sizeLabel(bytes) {
-  const kb = bytes / 1024;
-  return kb > 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.round(kb) + ' KB';
-}
+function hsl(n, s, l) { let h = 2166136261; for (let i = 0; i < n.length; i++) { h ^= n.charCodeAt(i); h = Math.imul(h, 16777619); } return 'hsl(' + ((h >>> 0) % 360) + ',' + s + '%,' + l + '%)'; }
+function sizeLabel(b) { const kb = b / 1024; return kb > 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.round(kb) + ' KB'; }
 
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 function ping() {
   const o = audioCtx.createOscillator();
   const g = audioCtx.createGain();
-  o.connect(g); g.connect(audioCtx.destination);
+  o.connect(g);
+  g.connect(audioCtx.destination);
   o.frequency.value = 800;
   g.gain.value = 0.15;
-  o.start(); o.stop(audioCtx.currentTime + 0.1);
+  o.start();
+  o.stop(audioCtx.currentTime + 0.1);
 }
 
 const renderer = new marked.Renderer();
-renderer.link = function({ href, text }) {
-  return '<a href="' + href + '" target="_blank" rel="noopener">' + text + '</a>';
-};
+renderer.link = ({ href, text }) => '<a href="' + href + '" target="_blank" rel="noopener">' + text + '</a>';
 marked.setOptions({ renderer });
 
 let sendMsg, files, myName, currentRoom = '', lastSender = '';
-
 const urlRoom = new URLSearchParams(location.search).get('room');
 if (urlRoom) $('room').value = urlRoom;
 const savedName = localStorage.getItem('chat_name');
@@ -129,27 +103,16 @@ if (savedName) $('name').value = savedName;
 
 function getHistory() { return JSON.parse(localStorage.getItem('chat_' + currentRoom) || '[]'); }
 function setHistory(h) { localStorage.setItem('chat_' + currentRoom, JSON.stringify(h)); }
-
-function loadHistory() {
-  getHistory().forEach(m => addMsg(m.name, m.text, m.ts, false));
-}
-
 function mergeHistory(remote) {
   const local = getHistory();
-  const localSet = new Set(local.map(m => m.ts + '|' + m.name + '|' + m.text));
-  const newMsgs = remote.filter(m => !localSet.has(m.ts + '|' + m.name + '|' + m.text));
-  if (!newMsgs.length) return;
-  const merged = [...local, ...newMsgs].sort((a, b) => a.ts - b.ts);
+  const key = m => m.ts + '|' + m.name + '|' + m.text;
+  const merged = [...new Map([...local, ...remote].map(m => [key(m), m])).values()].sort((a, b) => a.ts - b.ts);
+  if (merged.length === local.length) return;
   setHistory(merged);
   $('messages').innerHTML = '';
   lastSender = '';
-  merged.forEach(m => addMsg(m.name, m.text, m.ts, false));
-}
 
-function saveFilePlaceholder(name, fileName, sizeBytes, ts) {
-  const h = getHistory();
-  h.push({ name, text: '[File: ' + fileName + ' (' + sizeLabel(sizeBytes) + ')]', ts });
-  setHistory(h);
+  merged.forEach(m => addMsg(m.name, m.text, m.ts, false));
 }
 
 function msgWrap(name, children) {
@@ -167,7 +130,7 @@ function msgWrap(name, children) {
 function addMsg(name, text, ts = Date.now(), save = true) {
   const d = el('div', {
     class: 'msg markdown-body',
-    style: { background: bubbleColor(name), fontStyle: text.startsWith('[File: ') ? 'italic' : '' },
+    style: { background: hsl(name, 80, 90), fontStyle: text.startsWith('[File: ') ? 'italic' : '' },
     title: new Date(ts).toLocaleString(),
     html: DOMPurify.sanitize(marked.parse(text), { ADD_ATTR: ['target'] })
   });
@@ -179,7 +142,7 @@ function addMsg(name, text, ts = Date.now(), save = true) {
   }
 }
 
-function addFileMsg(sender, fileName, fileType, blob, ts = Date.now()) {
+function addFileMsg(sender, fileName, fileType, blob, ts = Date.now(), save = true) {
   const url = URL.createObjectURL(blob);
   const items = [];
   if (fileType.startsWith('image/'))
@@ -188,16 +151,21 @@ function addFileMsg(sender, fileName, fileType, blob, ts = Date.now()) {
   items.push(el('span', { class: 'file-size', text: sizeLabel(blob.size) }));
   const d = el('div', {
     class: 'msg',
-    style: { background: bubbleColor(sender) },
+    style: { background: hsl(sender, 80, 90) },
     title: new Date(ts).toLocaleString()
   }, [el('div', { class: 'file-msg' }, items)]);
   msgWrap(sender, [d]);
+  if (save) {
+    const h = getHistory();
+    h.push({ name: sender, text: '[File: ' + fileName + ' (' + sizeLabel(blob.size) + ')]', ts });
+    setHistory(h);
+  }
 }
 
 function addFileProgress(sender, fileName, id) {
   const d = el('div', {
     class: 'msg',
-    style: { background: bubbleColor(sender) }
+    style: { background: hsl(sender, 80, 90) }
   }, [el('div', { class: 'file-msg' }, [
     el('span', { class: 'file-status', style: { fontSize: '13px' }, text: 'Receiving ' + fileName + '...' })
   ])]);
@@ -206,17 +174,17 @@ function addFileProgress(sender, fileName, id) {
 }
 
 function updateFileProgress(id, pct) {
-  const fp = $('fp-' + id);
-  if (!fp) return;
-  const status = fp.querySelector('.file-status');
-  if (status) status.textContent = status.textContent.replace(/\.\.\..*/, '... ' + Math.round(pct * 100) + '%');
-  scrollDown();
+  const s = $('fp-' + id)?.querySelector('.file-status');
+  if (s) {
+    s.textContent = s.textContent.replace(/\.\.\..*/, '... ' + Math.round(pct * 100) + '%');
+    scrollDown();
+  }
 }
 
-function completeFileProgress(id, sender, fileName, fileType, blob) {
+function completeFileProgress(id, sender, fileName, fileType, blob, ts) {
   const fp = $('fp-' + id);
   if (fp) fp.remove();
-  addFileMsg(sender, fileName, fileType, blob);
+  addFileMsg(sender, fileName, fileType, blob, ts);
 }
 
 function sendText() {
@@ -235,7 +203,6 @@ async function sendFile(file, fileName) {
   const id = Date.now() + '-' + Math.random().toString(36).slice(2);
   const ts = Date.now();
   addFileMsg(myName, fileName, file.type, file, ts);
-  saveFilePlaceholder(myName, fileName, file.size, ts);
   await files.send(file, { metadata: { id, name: fileName, type: file.type, sender: myName, ts } });
 }
 
@@ -250,7 +217,7 @@ function join() {
   $('setup').style.display = 'none';
   $('chat').style.display = 'flex';
   $('room-label').textContent = r;
-  loadHistory();
+  getHistory().forEach(m => addMsg(m.name, m.text, m.ts, false));
 
   const room = joinRoom({ appId: 'onetimechat-phan' }, r);
   const chat = room.makeAction('chat');
@@ -259,14 +226,12 @@ function join() {
   files = room.makeAction('file');
   sendMsg = chat.send;
   profile.set({ name: myName });
-
   const peerName = (userId) => profile.getAll()[userId]?.name || 'unknown';
-
   const updateStatus = () => {
     const all = profile.getAll();
     const names = [myName, ...Object.values(all).map(p => p.name).filter(n => n !== myName)];
     $('status-text').textContent = names.length + ' online';
-    $('status-popup').innerHTML = names.map(n => '<div style="color:' + nameColor(n) + '">' + n + '</div>').join('');
+    $('status-popup').innerHTML = names.map(n => '<div style="color:' + hsl(n, 70, 40) + '">' + n + '</div>').join('');
   };
   updateStatus();
 
@@ -275,42 +240,49 @@ function join() {
     const h = getHistory();
     if (h.length) sync.send(h, userId);
   });
-  room.onUserLeave(() => updateStatus());
-  profile.onChange(() => updateStatus());
-
-  chat.onMessage((d) => { addMsg(d.n, d.t, d.ts || Date.now()); ping(); });
-  sync.onMessage((remote) => mergeHistory(remote));
-
+  room.onUserLeave(updateStatus);
+  profile.onChange(updateStatus);
+  chat.onMessage((d) => {
+    addMsg(d.n, d.t, d.ts || Date.now());
+    ping();
+  });
+  sync.onMessage(mergeHistory);
   files.onReceive(({ metadata, userId }) => {
     addFileProgress(metadata.sender || peerName(userId), metadata.name, metadata.id);
     return true;
   });
-  files.onReceiveProgress((progress, { metadata }) => {
-    updateFileProgress(metadata.id, progress);
-  });
+  files.onReceiveProgress((p, { metadata }) => updateFileProgress(metadata.id, p));
   files.onMessage((bytes, { userId, metadata }) => {
     const sender = metadata.sender || peerName(userId);
     const blob = new Blob([bytes], { type: metadata.type });
-    completeFileProgress(metadata.id, sender, metadata.name, metadata.type, blob);
-    saveFilePlaceholder(sender, metadata.name, blob.size, metadata.ts || Date.now());
+    completeFileProgress(metadata.id, sender, metadata.name, metadata.type, blob, metadata.ts || Date.now());
     ping();
   });
 }
 
 const msgEl = $('msg');
-
 $('go').onclick = join;
-$('name').onkeydown = e => { if (e.key === 'Enter') join(); };
-$('room').onkeydown = e => { if (e.key === 'Enter') join(); };
+const enterJoin = e => { if (e.key === 'Enter') join(); };
+$('name').onkeydown = enterJoin;
+$('room').onkeydown = enterJoin;
 $('send').onclick = sendText;
-msgEl.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendText(); } };
-msgEl.oninput = () => { msgEl.style.height = 'auto'; msgEl.style.height = msgEl.scrollHeight + 'px'; };
-
-$('file-input').onchange = async (e) => {
-  const file = e.target.files[0];
-  if (file) { await sendFile(file, file.name); e.target.value = ''; }
+msgEl.onkeydown = e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendText();
+  }
 };
-
+msgEl.oninput = () => {
+  msgEl.style.height = 'auto';
+  msgEl.style.height = msgEl.scrollHeight + 'px';
+};
+$('file-input').onchange = async (e) => {
+  const f = e.target.files[0];
+  if (f) {
+    await sendFile(f, f.name);
+    e.target.value = '';
+  }
+};
 document.addEventListener('paste', async (e) => {
   const items = e.clipboardData?.items;
   if (!items || !files) return;
@@ -321,7 +293,6 @@ document.addEventListener('paste', async (e) => {
     break;
   }
 });
-
 if (savedName && urlRoom) join();
 </script>
 </body>
